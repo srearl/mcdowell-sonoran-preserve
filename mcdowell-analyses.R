@@ -7,6 +7,7 @@
 library(RMySQL)
 library(tidyverse)
 library(vegan)
+library(lubridate)
 
 source('~/Documents/localSettings/mysql_rds_prod.R')
 mcd <- mysql_rds_connect('mcdowell_arthropods')
@@ -48,9 +49,9 @@ ORDER BY
 # McDowell and AD10 cumulative averages -----------------------------------
 
 # Calculate cumulative number of organisms per cumulative number of traps for
-# both the McDowell and PO10 sites. PO10 query is restricted to sampling events
-# > 2012-01-01 to more closely reflect the approximate start date (Feb 2012) of
-# the McDowell sampling.
+# both the McDowell and PO10 sites. core_average_all query is restricted to
+# sampling events > 2012-01-01 to more closely reflect the approximate start
+# date (Feb 2012) of the McDowell sampling.
 
 mcdowell_average_all <- dbGetQuery(mcd, "
 SELECT
@@ -189,11 +190,16 @@ ggsave("~/Desktop/cumulative_average.png")
 unlink(cumulative_average)
 
 
-# from dataset query ------------------------------------------------------
+# McDowell Mountain and AD10 annual averages ------------------------------
+
+# Calculate cumulative number of organisms per cumulative number of traps for
+# both the McDowell and PO10 sites by year. Date range is restricted to 2012 -
+# 2017.
 
 
 mcdowell_dataset <- dbGetQuery(mcd, "
 SELECT  
+  se.sampling_event_id,
   s.site_code,
   se.sample_date,
   count_data.trap_count,
@@ -249,21 +255,150 @@ JOIN
 ) AS count_data ON (count_data.sampling_event_id = tse.sampling_event_id)
 ORDER BY se.sample_date, s.site_code;")
 
-# what the heck?
 
-fromfile %>%
-  filter(trapcount < 50) %>% 
+core_dataset <- dbGetQuery(core, "
+SELECT  
+  se.sampling_event_id,
+  s.site_code, 
+  se.sample_date,
+  count_data.trap_count,
+  specimens_data.arth_class,
+  specimens_data.arth_order,
+  specimens_data.arth_family,
+  specimens_data.arth_genus_subgenus,
+  specimens_data.display_name,
+  specimens_data.lt2mm,
+  specimens_data._2_5mm,
+  specimens_data._5_10mm,
+  specimens_data.gt10mm,
+  specimens_data.unsized
+FROM lter10_arthropods_production.trap_sampling_events tse
+JOIN lter10_arthropods_production.sampling_events se ON (se.sampling_event_id = tse.sampling_event_id)
+JOIN lter10_arthropods_production.sites s ON (s.site_id = se.site_id)
+JOIN lter10_arthropods_production.traps t ON (tse.trap_id = t.trap_id)
+LEFT JOIN lter10_arthropods_production.people outer_join_people ON (outer_join_people.person_id = se.default_person_for_trap_samples)
+LEFT JOIN lter10_arthropods_production.specimens_data ON (specimens_data.trap_sampling_event_id = tse.trap_sampling_event_id)
+JOIN
+(
+  SELECT
+  trap_sampling_events.sampling_event_id,
+  COUNT(DISTINCT trap_sampling_events.trap_sampling_event_id) AS trap_count
+  FROM lter10_arthropods_production.trap_sampling_events
+  WHERE NOT 
+  (
+    trap_sampling_events.flags LIKE 'trap not collected' OR 
+    trap_sampling_events.flags LIKE 'NotCollected' OR
+    trap_sampling_events.flags LIKE 'missing'
+  ) OR 
+  trap_sampling_events.flags IS NULL OR
+  trap_sampling_events.flags = ''
+  GROUP BY sampling_event_id
+) AS count_data ON (count_data.sampling_event_id = tse.sampling_event_id)
+WHERE 
+  site_code LIKE 'AD-10'
+ORDER BY se.sample_date, s.site_code;")
+
+mcdowell_annual_avg <- mcdowell_dataset %>%
   rowwise() %>% 
-  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
-  ungroup() %>% View()
+  mutate(
+    sample_date = as.Date(sample_date, format = "%Y-%m-%d"),
+    allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)
+  ) %>%
+  ungroup() %>% 
+  group_by(sampling_event_id) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    all_orgs = sum(allsizes, na.rm = TRUE)
+  ) %>%
+  ungroup() %>% 
+  group_by(site_code, year(sample_date)) %>% 
+  summarise(
+    ann_avg = (sum(all_orgs)/sum(trap_count))
+  )
 
-mcdowell_dataset %>%
+core_annual_avg <- core_dataset %>% 
   rowwise() %>% 
-  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
-  ungroup() %>% View()
+  mutate(
+    sample_date = as.Date(sample_date, format = "%Y-%m-%d"),
+    allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)
+  ) %>%
+  ungroup() %>% 
+  group_by(sampling_event_id) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    all_orgs = sum(allsizes, na.rm = TRUE)
+  ) %>%
+  ungroup() %>% 
+  group_by(site_code, year(sample_date)) %>% 
+  summarise(
+    ann_avg = (sum(all_orgs)/sum(trap_count))
+  )
 
-mcdowell_dataset %>%
-  mutate(sum = map())
+annual_average <- rbind(core_annual_avg, mcdowell_annual_avg) %>% 
+  rename(
+    sitename = site_code,
+    year = `year(sample_date)`
+  ) %>% 
+  mutate(
+    position = case_when(
+      sitename %in% c('Paraiso', 'Bell', 'Dixileta', 'Mine', 'Rincon') ~ 'boundary',
+      TRUE ~ 'interior'
+    ),
+    region = case_when(
+      sitename %in% c('Dixileta', 'LoneMtn') ~ 'Browns',
+      sitename %in% c('TomThumb', 'Paraiso') ~ 'Toms',
+      sitename %in% c('Gateway', 'Bell') ~ 'Gateway',
+      sitename %in% c('Sunrise', 'Rincon') ~ 'Lost Dog',
+      sitename %in% c('Mine', 'Prospector') ~ 'Dixie Mine',
+      sitename %in% c('AD-10') ~ 'MMRP'
+    )
+  ) %>% 
+  filter(year >= 2012 & year < 2017)
+
+# make region a factor with levels corresponding to the desired order of the
+# plot facets
+annual_average$region <- factor(annual_average$region,
+                                levels = c('Browns', 'Toms', 'Dixie Mine', 'Gateway', 'Lost Dog', 'MMRP'))  
+
+ggplot(annual_average, aes(x = year, y = ann_avg)) +
+  geom_point(aes(color = position), size = 2) +
+  geom_line(aes(color = position)) +
+  # scale_colour_manual(values = c('green2', 'Grey')) +
+  scale_colour_manual(values = c('green2', 'grey47')) +
+  ggtitle('average number of organisms: location + year') + 
+  xlab('year') +
+  ylab('cumulative organisms per\ncumulative traps') +
+  facet_grid(region ~ ., switch = 'y') +
+  # facet_grid(region ~ ., switch = 'y') +
+  theme(
+    axis.text.x = element_text(size=8, colour = '#333333', family = 'Arial'),
+    axis.text.y = element_text(size=8, colour = '#333333', family = 'Arial'),
+    axis.title.x = element_text(size=12, colour = 'black', family = 'Arial', vjust = 0.0, face = 'bold'),
+    axis.title.y = element_text(size=12, colour = 'black', family = 'Arial', vjust = 1.0, face = 'bold'),
+    legend.key = element_blank(),
+    # axis.title.y = element_blank(),
+    # axis.ticks.y = element_line(size = 1, colour = 'black'),
+    # axis.line = element_line(size = 1, colour = 'black'),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # panel.background = element_blank(),
+    # panel.border=element_blank(),
+    # legend.text = element_blank(),
+    # legend.text = element_text(colour = 'black', size = 10),
+    # legend.title = element_blank(),
+    # legend.title = element_text(colour = 'black', size = 12),
+    plot.title = element_text(vjust = 1.2, hjust = 0.5, family = 'Arial', face = 'bold')
+  )
+
+ggsave("~/Desktop/ann_average.png")
+unlink(annual_average)
+  
+
+# scratch -----------------------------------------------------------------
 
 # maybe this one from arthropodAnalyses.R
 
