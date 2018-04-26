@@ -16,7 +16,8 @@ core <- mysql_rds_connect('lter10_arthropods_production')
 
 # McDowell total number of orgs by taxon ----------------------------------
 
-# Use mcdTotals to get total number of orgs and breakdown by taxonomic level.
+# Use mcdTotals to get summary stats: total number of orgs and breakdown of
+# numbers by taxonomic level.
 
 mcdTotals <- dbGetQuery(mcd, "
 SELECT trap_specimens.arthropod_taxon_id,
@@ -46,7 +47,7 @@ ORDER BY
   arth_genus_subgenus;")
 
 
-# McDowell and AD10 cumulative averages -----------------------------------
+# McDowell & AD10 cumulative averages -----------------------------------
 
 # Calculate cumulative number of organisms per cumulative number of traps for
 # both the McDowell and PO10 sites. core_average_all query is restricted to
@@ -142,8 +143,8 @@ cumulative_average <- bind_rows(mcdowell_average_all, core_average_all) %>%
       TRUE ~ 'interior'
     ),
     region = case_when(
-      sitename %in% c('Dixileta', 'LoneMtn') ~ 'Brown\'s Ranch',
-      sitename %in% c('TomThumb', 'Paraiso') ~ 'Tom\'s Thumb',
+      sitename %in% c('Dixileta', 'LoneMtn') ~ 'Browns',
+      sitename %in% c('TomThumb', 'Paraiso') ~ 'Toms',
       sitename %in% c('Gateway', 'Bell') ~ 'Gateway',
       sitename %in% c('Sunrise', 'Rincon') ~ 'Lost Dog',
       sitename %in% c('Mine', 'Prospector') ~ 'Dixie Mine',
@@ -154,16 +155,16 @@ cumulative_average <- bind_rows(mcdowell_average_all, core_average_all) %>%
 # make region a factor with levels corresponding to the desired order of the
 # plot facets
 cumulative_average$region <- factor(cumulative_average$region,
-                                    levels = c('Brown\'s Ranch', 'Tom\'s Thumb', 'Dixie Mine', 'Gateway', 'Lost Dog', 'MMRP'))  
+                                    levels = c('Browns', 'Toms', 'Dixie Mine', 'Gateway', 'Lost Dog', 'MMRP'))  
 
 ggplot(cumulative_average, aes(x = sitename, y = average, fill = position, labels = sitename)) +
   geom_bar(position=position_dodge(), stat="identity", colour = 'black', size = 0.4) +
   ggtitle('average number of organisms across sampling locations') + 
-  xlab('region') +
+  xlab('sampling location') +
   ylab('cumulative organisms per\ncumulative traps') +
   scale_x_discrete(labels = abbreviate) + # abbreviate site names
   facet_grid(. ~ region, scales = 'free', space = 'free_x') +
-  # geom_segment(aes(x=0.5, y=10.72897, xend=2.5, yend=10.72897), lty='dotted') + # global mean value (not included)
+  geom_segment(aes(x=0.5, y=10.97, xend=2.5, yend=10.97), lty='dotted') + # global mean value (not included)
   scale_fill_manual(values = c('green2', 'Grey')) +
   # guides(fill = guide_legend(override.aes = list(colour = NULL))) + # remove slashed lines from legend
   theme(
@@ -190,7 +191,7 @@ ggsave("~/Desktop/cumulative_average.png")
 unlink(cumulative_average)
 
 
-# McDowell Mountain and AD10 annual averages ------------------------------
+# McDowell & AD10 annual averages ------------------------------
 
 # Calculate cumulative number of organisms per cumulative number of traps for
 # both the McDowell and PO10 sites by year. Date range is restricted to 2012 -
@@ -396,52 +397,274 @@ ggplot(annual_average, aes(x = year, y = ann_avg)) +
 
 ggsave("~/Desktop/ann_average.png")
 unlink(annual_average)
-  
 
-# scratch -----------------------------------------------------------------
 
-# maybe this one from arthropodAnalyses.R
+# McDowell & AD10 annual diversity -----------------------------
 
-mcdAll <- dbGetQuery(mcd,
-"select
-se.sampling_event_id,
-sub.sumoftaxa,
-tc.trapcount,
-(sub.sumoftaxa/tc.trapcount) as average,
-se.site_id,
-se.sample_date,
-sub.display_name
-from sampling_events as se
-inner join(
-select
-sum(s.allsizes) as sumoftaxa,
-s.arthropod_taxon_id,
-atl.display_name,
-se_2.sampling_event_id
-FROM(
-select
-(
-IF(isnull(lt2mm), 0, lt2mm) +
-IF(isnull(_2_5mm), 0, _2_5mm) +
-IF(isnull(_5_10mm), 0, _5_10mm) +
-IF(isnull(gt10mm), 0, gt10mm) +
-IF(isnull(unsized), 0, unsized)
-) as allsizes,
-arthropod_taxon_id,
-trap_sampling_event_id
-FROM trap_specimens
-) as s
-inner join trap_sampling_events as se_2 on s.trap_sampling_event_id = se_2.trap_sampling_event_id
-inner join arthropod_taxonomies as atl on s.arthropod_taxon_id = atl.arthropod_taxon_id
-group by s.arthropod_taxon_id, se_2.sampling_event_id
-) as sub on (se.sampling_event_id = sub.sampling_event_id)
-inner join (
-select
-`trap_sampling_events`.`sampling_event_id`,
-count(distinct `trap_sampling_events`.`trap_sampling_event_id`) as trapcount
-from `trap_sampling_events`
-where coalesce(`trap_sampling_events`.flags, '') = ''
-group by sampling_event_id
-) as tc on (tc.sampling_event_id = sub.sampling_event_id)
-order by se.site_id, se.sample_date
-;")
+mcdowell_wide <- mcdowell_dataset %>%
+  filter(!is.na(display_name)) %>% 
+  mutate(display_name = trimws(display_name, which = c("both"))) %>% 
+  rowwise() %>% 
+  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(sampling_event_id, display_name) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    allsizes = sum(allsizes)
+  ) %>% 
+  ungroup() %>% 
+  mutate(sample_date = as.Date(sample_date, format = "%Y-%m-%d")) %>% 
+  group_by(site_code, year(sample_date), display_name) %>% 
+  summarise(ann_avg = (sum(allsizes)/sum(trap_count))) %>% 
+  ungroup() %>% 
+  spread(key = display_name, value = ann_avg) %>% 
+  rename(year = `year(sample_date)`)
+
+core_wide <- core_dataset %>%
+  filter(!is.na(display_name)) %>% 
+  mutate(display_name = trimws(display_name, which = c("both"))) %>% 
+  rowwise() %>% 
+  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(sampling_event_id, display_name) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    allsizes = sum(allsizes)
+  ) %>% 
+  ungroup() %>% 
+  mutate(sample_date = as.Date(sample_date, format = "%Y-%m-%d")) %>% 
+  group_by(site_code, year(sample_date), display_name) %>% 
+  summarise(ann_avg = (sum(allsizes)/sum(trap_count))) %>% 
+  ungroup() %>% 
+  spread(key = display_name, value = ann_avg) %>% 
+  rename(year = `year(sample_date)`)
+
+all_wide <- bind_rows(mcdowell_wide, core_wide)
+
+all_wide[is.na(all_wide)] <- 0 # NAs to 0
+all_wide$shannon <- diversity(log1p(all_wide[,-c(1,2)])) # create index
+all_wide <- all_wide %>% 
+  select(site_code, year, shannon)
+
+all_wide <- all_wide %>% 
+  rename(sitename = site_code) %>% 
+  mutate(
+    position = case_when(
+      sitename %in% c('Paraiso', 'Bell', 'Dixileta', 'Mine', 'Rincon') ~ 'boundary',
+      TRUE ~ 'interior'
+    ),
+    region = case_when(
+      sitename %in% c('Dixileta', 'LoneMtn') ~ 'Browns',
+      sitename %in% c('TomThumb', 'Paraiso') ~ 'Toms',
+      sitename %in% c('Gateway', 'Bell') ~ 'Gateway',
+      sitename %in% c('Sunrise', 'Rincon') ~ 'Lost Dog',
+      sitename %in% c('Mine', 'Prospector') ~ 'Dixie Mine',
+      sitename %in% c('AD-10') ~ 'MMRP'
+    )
+  ) %>% 
+  filter(year >= 2012 & year < 2017)
+
+# make region a factor with levels corresponding to the desired order of the
+# plot facets
+all_wide$region <- factor(all_wide$region,
+                          levels = c('Browns', 'Toms', 'Dixie Mine', 'Gateway', 'Lost Dog', 'MMRP'))  
+
+ggplot(all_wide, aes(x = year, y = shannon)) +
+  geom_point(aes(color = position), size = 2) +
+  geom_line(aes(color = position)) +
+  # scale_colour_manual(values = c('green2', 'Grey')) +
+  scale_colour_manual(values = c('green2', 'grey47')) +
+  ggtitle('diversity: location + year') + 
+  xlab('year') +
+  ylab('Shannon\'s diversity index (H)') +
+  facet_grid(region ~ ., switch = 'y') +
+  # facet_grid(region ~ ., switch = 'y') +
+  theme(
+    axis.text.x = element_text(size=8, colour = '#333333', family = 'Arial'),
+    axis.text.y = element_text(size=8, colour = '#333333', family = 'Arial'),
+    axis.title.x = element_text(size=12, colour = 'black', family = 'Arial', vjust = 0.0, face = 'bold'),
+    axis.title.y = element_text(size=12, colour = 'black', family = 'Arial', vjust = 1.0, face = 'bold'),
+    legend.key = element_blank(),
+    # axis.title.y = element_blank(),
+    # axis.ticks.y = element_line(size = 1, colour = 'black'),
+    # axis.line = element_line(size = 1, colour = 'black'),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # panel.background = element_blank(),
+    # panel.border=element_blank(),
+    # legend.text = element_blank(),
+    # legend.text = element_text(colour = 'black', size = 10),
+    # legend.title = element_blank(),
+    # legend.title = element_text(colour = 'black', size = 12),
+    plot.title = element_text(vjust = 1.2, hjust = 0.5, family = 'Arial', face = 'bold')
+  )
+
+
+ggsave("~/Desktop/all_wide.png")
+unlink(all_wide)
+
+
+
+# McDowell & AD10 cumulative diversity ------------------------------------
+
+
+mcdowell_wide <- mcdowell_dataset %>%
+  filter(!is.na(display_name)) %>% 
+  mutate(display_name = trimws(display_name, which = c("both"))) %>% 
+  rowwise() %>% 
+  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(sampling_event_id, display_name) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    allsizes = sum(allsizes)
+  ) %>% 
+  ungroup() %>% 
+  mutate(sample_date = as.Date(sample_date, format = "%Y-%m-%d")) %>% 
+  group_by(site_code, display_name) %>% 
+  summarise(cum_avg = (sum(allsizes)/sum(trap_count))) %>% 
+  ungroup() %>% 
+  spread(key = display_name, value = cum_avg)
+
+core_wide <- core_dataset %>%
+  filter(!is.na(display_name)) %>% 
+  mutate(display_name = trimws(display_name, which = c("both"))) %>% 
+  rowwise() %>% 
+  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(sampling_event_id, display_name) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    allsizes = sum(allsizes)
+  ) %>% 
+  ungroup() %>% 
+  mutate(sample_date = as.Date(sample_date, format = "%Y-%m-%d")) %>% 
+  filter(year(sample_date) >= 2012 & year(sample_date) <= 2016) %>% # contrain date range
+  group_by(site_code, display_name) %>% 
+  summarise(cum_avg = (sum(allsizes)/sum(trap_count))) %>% 
+  ungroup() %>% 
+  spread(key = display_name, value = cum_avg)
+
+all_wide <- bind_rows(mcdowell_wide, core_wide)
+
+all_wide[is.na(all_wide)] <- 0 # NAs to 0
+all_wide$shannon <- diversity(log1p(all_wide[,-c(1,2)])) # create index
+all_wide <- all_wide %>% 
+  select(site_code, shannon)
+
+
+all_wide <- all_wide %>% 
+  rename(sitename = site_code) %>% 
+  mutate(
+    position = case_when(
+      sitename %in% c('Paraiso', 'Bell', 'Dixileta', 'Mine', 'Rincon') ~ 'boundary',
+      TRUE ~ 'interior'
+    ),
+    region = case_when(
+      sitename %in% c('Dixileta', 'LoneMtn') ~ 'Brown\'s Ranch',
+      sitename %in% c('TomThumb', 'Paraiso') ~ 'Tom\'s Thumb',
+      sitename %in% c('Gateway', 'Bell') ~ 'Gateway',
+      sitename %in% c('Sunrise', 'Rincon') ~ 'Lost Dog',
+      sitename %in% c('Mine', 'Prospector') ~ 'Dixie Mine',
+      sitename %in% c('AD-10') ~ 'MMRP'
+    )
+  )
+
+# make region a factor with levels corresponding to the desired order of the
+# plot facets
+all_wide$region <- factor(all_wide$region,
+                          levels = c('Brown\'s Ranch', 'Tom\'s Thumb', 'Dixie Mine', 'Gateway', 'Lost Dog', 'MMRP'))  
+
+ggplot(all_wide, aes(x = sitename, y = shannon, fill = position, labels = sitename)) +
+  geom_bar(position=position_dodge(), stat="identity", colour = 'black', size = 0.4) +
+  coord_cartesian(ylim=c(3,4.5)) +
+  ggtitle('diversity of organisms across sampling locations') + 
+  xlab('sampling location') +
+  ylab('Shannon\'s diversity index (H)') +
+  scale_x_discrete(labels = abbreviate) + # abbreviate site names
+  facet_grid(. ~ region, scales = 'free', space = 'free_x') +
+  geom_segment(aes(x=0.5, y=4.23, xend=2.5, yend=4.23), lty='dotted') + # global mean value (not included)
+  scale_fill_manual(values = c('green2', 'Grey')) +
+  # guides(fill = guide_legend(override.aes = list(colour = NULL))) + # remove slashed lines from legend
+  theme(
+    axis.text.x = element_text(size=8, colour = '#333333', family = 'Arial'),
+    axis.text.y = element_text(size=8, colour = '#333333', family = 'Arial'),
+    axis.title.x = element_text(size=12, colour = 'black', family = 'Arial', vjust = 0.0, face = 'bold'),
+    axis.title.y = element_text(size=12, colour = 'black', family = 'Arial', vjust = 1.0, face = 'bold'),
+    legend.key = element_rect(colour = "black"), # add lines around legend boxes back after removing them with guides above
+    #         axis.title.y = element_blank(),
+    #         axis.ticks.y = element_line(size = 1, colour = 'black'),
+    #         axis.line = element_line(size = 1, colour = 'black'),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    #         panel.background = element_blank(),
+    #         # panel.border=element_blank(),
+    #         #legend.text = element_blank(),
+    #         legend.text = element_text(colour = 'black', size = 10),
+    #         #legend.title = element_blank(),
+    #         legend.title = element_text(colour = 'black', size = 12),
+    plot.title = element_text(vjust = 1.2, hjust = 0.5, family = 'Arial', face = 'bold')
+  )
+
+ggsave("~/Desktop/all_wide.png")
+unlink(all_wide)
+
+
+# McDowell & AD10 cumulative NMDS -----------------------------------------
+
+
+mcdowell_wide <- mcdowell_dataset %>%
+  filter(!is.na(display_name)) %>% 
+  mutate(display_name = trimws(display_name, which = c("both"))) %>% 
+  rowwise() %>% 
+  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(sampling_event_id, display_name) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    allsizes = sum(allsizes)
+  ) %>% 
+  ungroup() %>% 
+  mutate(sample_date = as.Date(sample_date, format = "%Y-%m-%d")) %>% 
+  group_by(site_code, display_name) %>% 
+  summarise(cum_avg = (sum(allsizes)/sum(trap_count))) %>% 
+  ungroup() %>% 
+  spread(key = display_name, value = cum_avg)
+
+core_wide <- core_dataset %>%
+  filter(!is.na(display_name)) %>% 
+  mutate(display_name = trimws(display_name, which = c("both"))) %>% 
+  rowwise() %>% 
+  mutate(allsizes = sum(lt2mm, `_2_5mm`, `_5_10mm`, gt10mm, unsized, na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(sampling_event_id, display_name) %>% 
+  summarise(
+    site_code = first(site_code),
+    sample_date = first(sample_date),
+    trap_count = first(trap_count),
+    allsizes = sum(allsizes)
+  ) %>% 
+  ungroup() %>% 
+  mutate(sample_date = as.Date(sample_date, format = "%Y-%m-%d")) %>% 
+  filter(year(sample_date) >= 2012 & year(sample_date) <= 2016) %>% # contrain date range
+  group_by(site_code, display_name) %>% 
+  summarise(cum_avg = (sum(allsizes)/sum(trap_count))) %>% 
+  ungroup() %>% 
+  spread(key = display_name, value = cum_avg)
+
+all_wide <- bind_rows(mcdowell_wide, core_wide)
+
+all_wide[is.na(all_wide)] <- 0 # NAs to 0
+nmds <- metaMDS(all_wide[,-c(1,2)])
+ordiplot(nmds, type = "text", display = "sites")
+
