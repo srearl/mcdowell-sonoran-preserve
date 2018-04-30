@@ -476,13 +476,12 @@ all_wide$region <- factor(all_wide$region,
 ggplot(all_wide, aes(x = year, y = shannon)) +
   geom_point(aes(color = position), size = 2) +
   geom_line(aes(color = position)) +
-  # scale_colour_manual(values = c('green2', 'Grey')) +
+  scale_y_continuous(limits = c(1.5,3.9), breaks = c(2,3,4)) +
   scale_colour_manual(values = c('green2', 'grey47')) +
   ggtitle('diversity: location + year') + 
   xlab('year') +
   ylab('Shannon\'s diversity index (H)') +
   facet_grid(region ~ ., switch = 'y') +
-  # facet_grid(region ~ ., switch = 'y') +
   theme(
     axis.text.x = element_text(size=8, colour = '#333333', family = 'Arial'),
     axis.text.y = element_text(size=8, colour = '#333333', family = 'Arial'),
@@ -569,8 +568,8 @@ all_wide <- all_wide %>%
       TRUE ~ 'interior'
     ),
     region = case_when(
-      sitename %in% c('Dixileta', 'LoneMtn') ~ 'Brown\'s Ranch',
-      sitename %in% c('TomThumb', 'Paraiso') ~ 'Tom\'s Thumb',
+      sitename %in% c('Dixileta', 'LoneMtn') ~ 'Browns',
+      sitename %in% c('TomThumb', 'Paraiso') ~ 'Toms',
       sitename %in% c('Gateway', 'Bell') ~ 'Gateway',
       sitename %in% c('Sunrise', 'Rincon') ~ 'Lost Dog',
       sitename %in% c('Mine', 'Prospector') ~ 'Dixie Mine',
@@ -581,11 +580,11 @@ all_wide <- all_wide %>%
 # make region a factor with levels corresponding to the desired order of the
 # plot facets
 all_wide$region <- factor(all_wide$region,
-                          levels = c('Brown\'s Ranch', 'Tom\'s Thumb', 'Dixie Mine', 'Gateway', 'Lost Dog', 'MMRP'))  
+                          levels = c('Browns', 'Toms', 'Dixie Mine', 'Gateway', 'Lost Dog', 'MMRP'))  
 
 ggplot(all_wide, aes(x = sitename, y = shannon, fill = position, labels = sitename)) +
   geom_bar(position=position_dodge(), stat="identity", colour = 'black', size = 0.4) +
-  coord_cartesian(ylim=c(3,4.5)) +
+  # coord_cartesian(ylim=c(3.5,4.5)) +
   ggtitle('diversity of organisms across sampling locations') + 
   xlab('sampling location') +
   ylab('Shannon\'s diversity index (H)') +
